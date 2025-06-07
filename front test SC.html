@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Conectar/Desconectar Polkadot.js Wallet y Mostrar Balance de Paseo</title>
+
+    <!-- Importar la API de Polkadot.js usando ES Modules -->
+    <script type="module">
+        import { ApiPromise, WsProvider } from "https://cdn.jsdelivr.net/npm/@polkadot/api/+esm";
+        import { ContractPromise, Abi } from "https://cdn.jsdelivr.net/npm/@polkadot/api-contract/+esm";
+
+        window.ApiPromise = ApiPromise;
+        window.WsProvider = WsProvider;
+        window.ContractPromise = ContractPromise;
+        window.Abi = Abi;
+    </script>
+
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        select,
+        button,
+        textarea,
+        #file-dropzone {
+            margin: 10px;
+            padding: 10px;
+            font-size: 16px;
+        }
+        #file-dropzone {
+            width: 80%;
+            height: 150px;
+            border: 2px dashed #aaa;
+            border-radius: 8px;
+            line-height: 130px;
+            color: #666;
+            cursor: pointer;
+            user-select: none;
+        }
+        #file-dropzone.dragover {
+            border-color: #333;
+            color: #000;
+            background-color: #eee;
+        }
+    </style>
+</head>
+<body>
+    <h1>Conectar/Desconectar Billetera Polkadot.js</h1>
+    <button id="connect-btn" onclick="connectWallet()">Conectar Wallet</button>
+    <button id="disconnect-btn" onclick="disconnectWallet()" style="display: none;">Desconectar Wallet</button>
+
+    <p>Selecciona tu cuenta:</p>
+    <select id="accounts" onchange="updateSelectedAccount()"></select>
+
+    <h2>Balance de Token Pas:</h2>
+    <p id="balance">N/A</p>
+    <p id="block-number">Bloque actual: N/A</p>
+
+    <h2>Cargar metadata del contrato</h2>
+    <div id="file-dropzone">Arrastra y suelta aquí el archivo .contract o haz clic para seleccionar</div>
+    <input type="file" id="file-input" accept=".contract" style="display:none" />
+    <p id="metadata-filename">Ningún archivo cargado</p>
+    <button id="load-metadata-btn" onclick="loadContractMetadata()" disabled>Cargar Metadata</button>
+
+    <h2>Leer valor del contrato</h2>
+    <button id="read-contract-btn" onclick="readContractValue()" disabled>Leer valor</button>
+    <p id="contract-value">Valor: N/A</p>
+
+    <h2>Pago rápido</h2>
+    <button onclick="payOnePas()">Pagar 1 PAS</button>
+    <p id="pay-result"></p>
+
+    <script>
+        // Variables globales para la API, cuenta seleccionada y contrato
+        let api = null;
+        let selectedAccount = null;
+        let contract = null;
+        let loadedMetadata = null;
+        const contractAddress = "15rq1k9YimCryGdazTWMo7SgQuUZokKhYdKd9JAzngc3j9Py"; // Dirección fija del contrato
+
+        // Elementos DOM para dropzone y file input
+        const dropzone = document.getElementById('file-dropzone');
+        const fileInput = document.getElementById('file-input');
+        const metadataFilename = document.getElementById('metadata-filename');
+        const loadMetadataBtn = document.getElementById('load-metadata-btn');
+        const readContractBtn = document.getElementById('read-contract-btn');
+
+        // Manejar eventos drag and drop
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+
+        dropzone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // Abrir selector de archivos al hacer clic en dropzone
+        dropzone.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // Manejar selección de archivo desde input
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        // Función para manejar archivo cargado
+        function handleFile(file) {
+            if (!file.name.endsWith('.contract')) {
+                alert('Por favor, selecciona un archivo con extensión .contract');
+                return;
+            }
+            metadataFilename.textContent = `Archivo cargado: ${file.name}`;
+            loadMetadataBtn.disabled = false;
+            loadedMetadata = null;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    loadedMetadata = JSON.parse(event.target.result);
+                } catch (error) {
+                    alert('Error al parsear el archivo .contract. Asegúrate que sea un JSON válido.');
+                    loadedMetadata = null;
+                    loadMetadataBtn.disabled = true;
+                    metadataFilename.textContent = 'Ningún archivo cargado';
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // Función para conectar la wallet y la API
+        async function connectWallet() {
+            console.log("📢 Intentando conectar billetera...");
+
+            if (!window.injectedWeb3 || !window.injectedWeb3["polkadot-js"]) {
+                alert("❌ No se encontró la extensión Polkadot.js. Asegúrate de instalarla y recargar la página.");
+                return;
+            }
+
+            try {
+                console.log("✅ Extensión detectada. Intentando conectar...");
+
+                const polkadotJs = window.injectedWeb3["polkadot-js"];
+                const provider = await polkadotJs.enable("MiDApp");
+
+                console.log("✅ Billetera habilitada. Obteniendo cuentas...");
+
+                const accounts = await provider.accounts.get();
+                if (accounts.length === 0) {
+                    alert("⚠️ No se encontraron cuentas en la billetera. Asegúrate de estar conectado.");
+                    return;
+                }
+
+                const accountsDropdown = document.getElementById("accounts");
+                accountsDropdown.innerHTML = "";
+
+                accounts.forEach((acc) => {
+                    let option = document.createElement("option");
+                    option.value = acc.address;
+                    option.text = `${acc.name || "Cuenta"} - ${acc.address}`;
+                    accountsDropdown.appendChild(option);
+                });
+
+                selectedAccount = accounts[0].address;
+                console.log("✅ Billetera conectada con éxito:", accounts);
+
+                document.getElementById("connect-btn").style.display = "none";
+                document.getElementById("disconnect-btn").style.display = "inline-block";
+
+                await connectToPaseoNode();
+                await updateBalance();
+                await subscribeBlockNumber();
+            } catch (error) {
+                console.error("❌ Error conectando la billetera:", error);
+            }
+        }
+
+        // Función para desconectar la wallet y limpiar variables
+        function disconnectWallet() {
+            console.log("🔌 Desconectando billetera...");
+
+            document.getElementById("accounts").innerHTML = "";
+            selectedAccount = null;
+            api = null;
+            contract = null;
+            loadedMetadata = null;
+
+            document.getElementById("balance").innerText = "N/A";
+            document.getElementById("block-number").innerText = "Bloque actual: N/A";
+            document.getElementById("contract-value").innerText = "Valor: N/A";
+            document.getElementById("pay-result").innerText = "";
+
+            metadataFilename.textContent = 'Ningún archivo cargado';
+            loadMetadataBtn.disabled = true;
+            readContractBtn.disabled = true;
+
+            console.log("✅ Billetera desconectada.");
+
+            document.getElementById("connect-btn").style.display = "inline-block";
+            document.getElementById("disconnect-btn").style.display = "none";
+        }
+
+        // Función para conectar al nodo Paseo
+        async function connectToPaseoNode() {
+            try {
+                console.log("🔌 Conectando al nodo de Paseo...");
+
+                if (!window.ApiPromise || !window.WsProvider) {
+                    console.error("❌ La API de Polkadot.js no se ha cargado correctamente.");
+                    return;
+                }
+
+                const NODE_URL = "wss://rpc.ibp.network/paseo";
+
+                const { ApiPromise, WsProvider } = window;
+
+                const provider = new WsProvider(NODE_URL);
+                api = await ApiPromise.create({ provider });
+
+                await api.isReady;
+
+                console.log("✅ Conectado al nodo de Paseo.");
+            } catch (error) {
+                console.error("❌ Error conectando al nodo de Paseo:", error);
+            }
+        }
+
+        // Función para actualizar el balance de la cuenta seleccionada
+        async function updateBalance() {
+            if (!api || !selectedAccount) return;
+
+            try {
+                const {
+                    data: { free: balance },
+                } = await api.query.system.account(selectedAccount);
+
+                const formattedBalance = Number(balance) / 10 ** 12;
+
+                document.getElementById("balance").innerText =
+                    formattedBalance.toLocaleString("es-ES", {
+                        minimumFractionDigits: 3,
+                        maximumFractionDigits: 3,
+                    }) + " PAS";
+            } catch (error) {
+                console.error("❌ Error obteniendo el balance:", error);
+            }
+        }
+
+        // Función para actualizar la cuenta seleccionada
+        function updateSelectedAccount() {
+            const accountsDropdown = document.getElementById("accounts");
+            selectedAccount = accountsDropdown.value;
+            updateBalance();
+        }
+
+        // Función para suscribirse al número de bloque en tiempo real
+        async function subscribeBlockNumber() {
+            if (!api) {
+                console.error("La API no está conectada.");
+                return;
+            }
+
+            const unsubscribe = await api.rpc.chain.subscribeNewHeads((lastHeader) => {
+                console.log(`Nuevo bloque: #${lastHeader.number}`);
+                document.getElementById("block-number").innerText =
+                    `Bloque actual: #${lastHeader.number}`;
+            });
+        }
+
+        // Función para cargar la metadata del contrato desde el archivo cargado
+        function loadContractMetadata() {
+            if (!loadedMetadata) {
+                alert("Por favor, carga un archivo .contract válido primero.");
+                return;
+            }
+
+            try {
+                console.log("Intentando crear instancia del contrato con la metadata para solo lectura:", loadedMetadata);
+                if (!api || !api.isReady) {
+                    console.error("La API no está lista. Estado:", api ? api.isReady : "API no inicializada");
+                    alert("La API no está lista. Por favor, conecta la wallet y espera a que la API esté lista.");
+                    return;
+                }
+                if (!loadedMetadata.source || !loadedMetadata.contract) {
+                    console.error("Metadata inválida o estructura inesperada:", loadedMetadata);
+                    alert("La metadata del contrato parece inválida o incompleta.");
+                    return;
+                }
+
+                // Crear instancia del contrato para solo consultas (no usar funciones de despliegue)
+                contract = new ContractPromise(api, loadedMetadata, contractAddress);
+                readContractBtn.disabled = false;
+                alert("Metadata cargada y contrato listo para consultas.");
+            } catch (error) {
+                alert("Error creando instancia del contrato para consultas. Revisa la consola para más detalles.");
+                console.error("Error creando instancia del contrato:", error);
+                console.log("Metadata cargada:", loadedMetadata);
+                console.log("API estado:", api ? (api.isReady ? "Listo" : "No listo") : "No inicializado");
+                console.log("Dirección contrato:", contractAddress);
+            }
+        }
+
+
+        // Función para leer el valor del contrato llamando a la función "get"
+        async function readContractValue() {
+            if (!contract || !selectedAccount) {
+                alert("Por favor, conecta la wallet, selecciona una cuenta y carga la metadata primero.");
+                return;
+            }
+
+            const gasLimit = 3000n * 1000000n; // Gas máximo para la llamada
+
+            try {
+                // Realizar solo consulta de lectura (dry run) sin storageDepositLimit
+                const { gasRequired, result, output } = await contract.query.get(
+                    selectedAccount,
+                    { gasLimit }
+                );
+
+                if (result.isOk) {
+                    document.getElementById("contract-value").innerText = `Valor: ${output.toHuman()}`;
+                    console.log("Lectura exitosa:", output.toHuman());
+                } else {
+                    document.getElementById("contract-value").innerText = "Error en la lectura del contrato";
+                    console.error("Error en la lectura del contrato:", result.asErr);
+                }
+            } catch (error) {
+                document.getElementById("contract-value").innerText = "Error ejecutando la consulta";
+                console.error("Error ejecutando la consulta:", error);
+            }
+        }
+
+        // Función para realizar un pago rápido de 1 PAS
+        async function payOnePas() {
+            if (!api) {
+                alert("La API no está conectada.");
+                return;
+            }
+            if (!selectedAccount) {
+                alert("Por favor, conecta y selecciona una cuenta primero.");
+                return;
+            }
+
+            const recipient = "13uHe9HLv3MAahwFhyepq4yNKysonAzePFLUhgvZNPZp4N5b";
+            const amount = 1;
+
+            console.log(`Iniciando pago de 1 PAS a ${recipient} desde ${selectedAccount}`);
+
+            try {
+                const amountPlancks = BigInt(Math.floor(amount * 10 ** 9));
+
+                const transfer = api.tx.balances.transferAllowDeath(recipient, amountPlancks);
+
+                const injector = await window.injectedWeb3['polkadot-js'].enable('MiDApp').then(provider => provider.signer);
+
+                console.log("Firmando y enviando la transacción de pago...");
+
+                await transfer.signAndSend(selectedAccount, { signer: injector }, async ({ status, events, dispatchError }) => {
+                    if (status.isInBlock) {
+                        console.log(`Pago incluido en bloque ${status.asInBlock}`);
+                        document.getElementById("pay-result").innerText = `Pago incluido en bloque ${status.asInBlock}`;
+                        await updateBalance();
+                    } else if (status.isFinalized) {
+                        console.log(`Pago finalizado en bloque ${status.asFinalized}`);
+                        document.getElementById("pay-result").innerText = `Pago finalizado en bloque ${status.asFinalized}`;
+                    } else {
+                        console.log(`Estado del pago: ${status.type}`);
+                    }
+
+                    if (dispatchError) {
+                        if (dispatchError.isModule) {
+                            const decoded = api.registry.findMetaError(dispatchError.asModule);
+                            const { documentation, name, section } = decoded;
+                            console.error(`Error en pago: ${section}.${name}: ${documentation.join(' ')}`);
+                            document.getElementById("pay-result").innerText = `Error en pago: ${section}.${name}: ${documentation.join(' ')}`;
+                        } else {
+                            console.error(`Error en pago: ${dispatchError.toString()}`);
+                            document.getElementById("pay-result").innerText = `Error en pago: ${dispatchError.toString()}`;
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Error enviando pago:", error);
+                document.getElementById("pay-result").innerText = `Error enviando pago: ${error.message}`;
+            }
+        }
+    </script>
+    <h2>Información del nodo</h2>
+    <p id="node-info">N/A</p>
+
+    <script>
+        // Añadir función para obtener información del nodo
+        async function getNodeInfo() {
+            if (!api) {
+                document.getElementById('node-info').innerText = 'API no conectada';
+                return;
+            }
+            try {
+                const chain = await api.rpc.system.chain();
+                const nodeName = await api.rpc.system.name();
+                const nodeVersion = await api.rpc.system.version();
+                document.getElementById('node-info').innerText = `Cadena: ${chain}, Nodo: ${nodeName}, Versión: ${nodeVersion}`;
+            } catch (error) {
+                document.getElementById('node-info').innerText = 'Error obteniendo información del nodo';
+                console.error('Error obteniendo información del nodo:', error);
+            }
+        }
+
+        // Modificar connectWallet para llamar a getNodeInfo después de conectar
+        const originalConnectWallet = connectWallet;
+        connectWallet = async function() {
+            await originalConnectWallet();
+            await getNodeInfo();
+        };
+    </script>
+</body>
+</html>
