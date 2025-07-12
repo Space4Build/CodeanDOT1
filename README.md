@@ -1,7 +1,5 @@
 # Polkadot.js Wallet Connector & Paseo Balance Viewer
 
-![Polkadot Logo](https://polkadot.network/assets/img/logo-polkadot.svg)
-
 Aplicación web para conectar/desconectar una billetera Polkadot.js, mostrar balances en la red Paseo (testnet de Polkadot) y realizar transferencias básicas. Desarrollado como parte del bootcamp **CodeanDOT** de Space4Build.
 
 ## 🚀 Características
