@@ -14,7 +14,7 @@
         window.Abi = Abi;
     </script>
     <!-- Cargar SDK de SubWallet -->
-    <script src="https://cdn.jsdelivr.net/npm/ @subwallet-connect/core/dist/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@subwallet-connect/core/dist/index.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -24,7 +24,6 @@
         }
         select,
         button,
-        textarea,
         #file-dropzone {
             margin: 10px;
             padding: 10px;
@@ -52,7 +51,6 @@
     <button id="connect-btn" onclick="connectWallet()">Conectar Polkadot.js</button>
     <button onclick="connectSubWallet()">Conectar SubWallet</button>
     <button id="disconnect-btn" onclick="disconnectWallet()" style="display: none;">Desconectar Wallet</button>
-
     <p>Selecciona tu cuenta:</p>
     <select id="accounts" onchange="updateSelectedAccount()"></select>
 
@@ -61,243 +59,441 @@
     <p id="block-number">Bloque actual: N/A</p>
 
     <h2>Pago rápido</h2>
-    <button onclick="payOnePas()">Pagar 20 PAS</button>
+    <button onclick="payAmount(20)">Pagar 20 PAS</button>
+    <button onclick="payAmount(10)">Pagar 10 PAS</button>
+    <button onclick="payAmount(5)">Pagar 5 PAS</button>
+    <p>o</p>
+    <input type="number" id="custom-amount" placeholder="Ingresa monto (menos de 1 PAS que tu saldo)" step="0.0001" min="0" />
+    <button onclick="payCustomAmount()">Pagar Monto Personalizado</button>
     <p id="pay-result"></p>
 
     <h2>Información del nodo</h2>
     <p id="node-info">N/A</p>
 
     <script>
-        // Variables globales
-        let api = null;
-        let selectedAccount = null;
-        let contract = null;
-        let loadedMetadata = null;
+    // Variables globales
+    let api = null;
+    let selectedAccount = null;
 
-        // Variables específicas para SubWallet
-        let subWalletProvider = null;
-        let selectedSubWalletAccount = null;
+    // Variables específicas para SubWallet
+    let subWalletProvider = null;
+    let selectedSubWalletAccount = null;
 
-        const contractAddress = "15rq1k9YimCryGdazTWMo7SgQuUZokKhYdKd9JAzngc3j9Py"; // Dirección fija del contrato
+    const contractAddress = "15rq1k9YimCryGdazTWMo7SgQuUZokKhYdKd9JAzngc3j9Py"; // Dirección fija del contrato
 
-        // Función para detectar si SubWallet está disponible
-        function isSubWalletAvailable() {
-            return window.injectedWeb3 && window.injectedWeb3['subwallet-js'];
+    // Función para detectar si SubWallet está disponible
+    function isSubWalletAvailable() {
+        return window.injectedWeb3 && window.injectedWeb3['subwallet-js'];
+    }
+
+    // Conectar con Polkadot.js
+    async function connectWallet() {
+        console.log("📢 Intentando conectar billetera...");
+        if (!window.injectedWeb3 || !window.injectedWeb3["polkadot-js"]) {
+            alert("❌ No se encontró la extensión Polkadot.js. Asegúrate de instalarla y recargar la página.");
+            return;
         }
-
-        // Conectar con Polkadot.js
-        async function connectWallet() {
-            console.log("📢 Intentando conectar billetera...");
-            if (!window.injectedWeb3 || !window.injectedWeb3["polkadot-js"]) {
-                alert("❌ No se encontró la extensión Polkadot.js. Asegúrate de instalarla y recargar la página.");
+        try {
+            console.log("✅ Extensión detectada. Intentando conectar...");
+            const polkadotJs = window.injectedWeb3["polkadot-js"];
+            const provider = await polkadotJs.enable("MiDApp");
+            console.log("✅ Billetera habilitada. Obteniendo cuentas...");
+            const accounts = await provider.accounts.get();
+            if (accounts.length === 0) {
+                alert("⚠️ No se encontraron cuentas en la billetera. Asegúrate de estar conectado.");
                 return;
             }
-            try {
-                console.log("✅ Extensión detectada. Intentando conectar...");
-                const polkadotJs = window.injectedWeb3["polkadot-js"];
-                const provider = await polkadotJs.enable("MiDApp");
-                console.log("✅ Billetera habilitada. Obteniendo cuentas...");
-                const accounts = await provider.accounts.get();
-                if (accounts.length === 0) {
-                    alert("⚠️ No se encontraron cuentas en la billetera. Asegúrate de estar conectado.");
-                    return;
-                }
-                const accountsDropdown = document.getElementById("accounts");
-                accountsDropdown.innerHTML = "";
-                accounts.forEach((acc) => {
-                    let option = document.createElement("option");
-                    option.value = acc.address;
-                    option.text = `${acc.name || "Cuenta"} - ${acc.address}`;
-                    accountsDropdown.appendChild(option);
-                });
-                selectedAccount = accounts[0].address;
-                selectedSubWalletAccount = null;
-                console.log("✅ Billetera conectada con éxito:", accounts);
-                document.getElementById("connect-btn").style.display = "none";
-                document.getElementById("disconnect-btn").style.display = "inline-block";
-                await connectToPaseoNode();
-                await updateBalance();
-                await subscribeBlockNumber();
-                await getNodeInfo();
-            } catch (error) {
-                console.error("❌ Error conectando la billetera:", error);
-            }
-        }
-
-        // Conectar con SubWallet
-        async function connectSubWallet() {
-            if (!isSubWalletAvailable()) {
-                alert("❌ No se encontró SubWallet. Asegúrate de tener la extensión o app instalada.");
-                return;
-            }
-
-            try {
-                console.log("🔄 Inicializando SubWallet...");
-                subWalletProvider = await window.injectedWeb3['subwallet-js'].enable("MiDApp");
-                const accounts = await subWalletProvider.accounts.get();
-
-                if (accounts.length === 0) {
-                    alert("⚠️ No se encontraron cuentas en SubWallet.");
-                    return;
-                }
-
-                selectedSubWalletAccount = accounts[0].address;
-                selectedAccount = null;
-
-                console.log("✅ Cuenta conectada en SubWallet:", selectedSubWalletAccount);
-
-                document.getElementById("connect-btn").style.display = "none";
-                document.getElementById("disconnect-btn").style.display = "inline-block";
-                document.getElementById("accounts").innerHTML = `<option value="${selectedSubWalletAccount}">SubWallet - ${selectedSubWalletAccount}</option>`;
-                selectedAccount = selectedSubWalletAccount;
-
-                await connectToPaseoNode();
-                await updateBalance();
-                await subscribeBlockNumber();
-                await getNodeInfo();
-            } catch (error) {
-                console.error("❌ Error al conectar con SubWallet:", error);
-                alert("Error al conectar con SubWallet. Verifica tu conexión.");
-            }
-        }
-
-        // Desconectar ambas wallets
-        function disconnectWallet() {
-            console.log("🔌 Desconectando billetera...");
-            document.getElementById("accounts").innerHTML = "";
-            selectedAccount = null;
-            selectedSubWalletAccount = null;
-            api = null;
-            contract = null;
-            loadedMetadata = null;
-            document.getElementById("balance").innerText = "N/A";
-            document.getElementById("block-number").innerText = "Bloque actual: N/A";
-            document.getElementById("contract-value").innerText = "Valor: N/A";
-            document.getElementById("pay-result").innerText = "";
-            console.log("✅ Billetera desconectada.");
-            document.getElementById("connect-btn").style.display = "inline-block";
-            document.getElementById("disconnect-btn").style.display = "none";
-        }
-
-        // Conectar al nodo Paseo
-        async function connectToPaseoNode() {
-            try {
-                console.log("🔌 Conectando al nodo de Paseo...");
-                if (!window.ApiPromise || !window.WsProvider) {
-                    console.error("❌ La API de Polkadot.js no se ha cargado correctamente.");
-                    return;
-                }
-                const NODE_URL = "wss://rpc.ibp.network/paseo";
-                const { ApiPromise, WsProvider } = window;
-                const provider = new WsProvider(NODE_URL);
-                api = await ApiPromise.create({ provider });
-                await api.isReady;
-                console.log("✅ Conectado al nodo de Paseo.");
-            } catch (error) {
-                console.error("❌ Error conectando al nodo de Paseo:", error);
-            }
-        }
-
-        // Actualizar balance
-        async function updateBalance() {
-            if (!api || !selectedAccount) return;
-            try {
-                const {
-                    data: { free: balance },
-                } = await api.query.system.account(selectedAccount);
-                const formattedBalance = Number(balance) / 10 ** 12;
-                document.getElementById("balance").innerText =
-                    formattedBalance.toLocaleString("es-ES", {
-                        minimumFractionDigits: 3,
-                        maximumFractionDigits: 3,
-                    }) + " PAS";
-            } catch (error) {
-                console.error("❌ Error obteniendo el balance:", error);
-            }
-        }
-
-        // Actualizar cuenta seleccionada
-        function updateSelectedAccount() {
             const accountsDropdown = document.getElementById("accounts");
-            selectedAccount = accountsDropdown.value;
-            selectedSubWalletAccount = null;
-            updateBalance();
-        }
-
-        // Suscripción a bloques
-        async function subscribeBlockNumber() {
-            if (!api) return;
-            const unsubscribe = await api.rpc.chain.subscribeNewHeads((lastHeader) => {
-                document.getElementById("block-number").innerText =
-                    `Bloque actual: #${lastHeader.number}`;
+            accountsDropdown.innerHTML = ""; // Limpiar opciones
+            accounts.forEach((acc) => {
+                let option = document.createElement("option");
+                option.value = acc.address;
+                option.text = `${acc.name || "Cuenta"} - ${acc.address.slice(0, 8)}...${acc.address.slice(-6)}`;
+                accountsDropdown.appendChild(option);
             });
+            selectedAccount = accounts[0].address;
+            selectedSubWalletAccount = null;
+            console.log("✅ Billetera conectada con éxito:", accounts);
+            document.getElementById("connect-btn").style.display = "none";
+            document.getElementById("disconnect-btn").style.display = "inline-block";
+            await connectToPaseoNode();
+            await updateBalance();
+            await subscribeBlockNumber();
+            await getNodeInfo();
+        } catch (error) {
+            console.error("❌ Error conectando la billetera:", error);
+        }
+    }
+
+    // Conectar con SubWallet
+    async function connectSubWallet() {
+        if (!isSubWalletAvailable()) {
+            alert("❌ No se encontró SubWallet. Asegúrate de tener la extensión o app instalada.");
+            return;
+        }
+        try {
+            console.log("🔄 Inicializando SubWallet...");
+            subWalletProvider = await window.injectedWeb3['subwallet-js'].enable("MiDApp");
+            const accounts = await subWalletProvider.accounts.get();
+            if (accounts.length === 0) {
+                alert("⚠️ No se encontraron cuentas en SubWallet.");
+                return;
+            }
+            const accountsDropdown = document.getElementById("accounts");
+            accountsDropdown.innerHTML = ""; // Limpiar opciones
+            accounts.forEach((acc) => {
+                let option = document.createElement("option");
+                option.value = acc.address;
+                option.text = `${acc.name || "Cuenta"} - ${acc.address.slice(0, 8)}...${acc.address.slice(-6)}`;
+                accountsDropdown.appendChild(option);
+            });
+            selectedSubWalletAccount = accounts[0].address;
+            selectedAccount = selectedSubWalletAccount;
+            console.log("✅ Cuentas cargadas en SubWallet:", accounts);
+            document.getElementById("connect-btn").style.display = "none";
+            document.getElementById("disconnect-btn").style.display = "inline-block";
+            await connectToPaseoNode();
+            await updateBalance();
+            await subscribeBlockNumber();
+            await getNodeInfo();
+        } catch (error) {
+            console.error("❌ Error al conectar con SubWallet:", error);
+            alert("Error al conectar con SubWallet. Verifica tu conexión.");
+        }
+    }
+
+    // Desconectar ambas wallets
+    function disconnectWallet() {
+        console.log("🔌 Desconectando billetera...");
+        document.getElementById("accounts").innerHTML = "";
+        selectedAccount = null;
+        selectedSubWalletAccount = null;
+        api = null;
+        document.getElementById("balance").innerText = "N/A";
+        document.getElementById("block-number").innerText = "Bloque actual: N/A";
+        document.getElementById("pay-result").innerText = "";
+        document.getElementById("node-info").innerText = "N/A";
+        console.log("✅ Billetera desconectada.");
+        document.getElementById("connect-btn").style.display = "inline-block";
+        document.getElementById("disconnect-btn").style.display = "none";
+    }
+
+    // Conectar al nodo Paseo
+    async function connectToPaseoNode() {
+        try {
+            console.log("🔌 Conectando al nodo de Paseo...");
+            if (!window.ApiPromise || !window.WsProvider) {
+                console.error("❌ La API de Polkadot.js no se ha cargado correctamente.");
+                return;
+            }
+            const NODE_URL = "wss://rpc.ibp.network/paseo";
+            const { ApiPromise, WsProvider } = window;
+            const provider = new WsProvider(NODE_URL);
+            api = await ApiPromise.create({ provider });
+            await api.isReady;
+            console.log("✅ Conectado al nodo de Paseo.");
+        } catch (error) {
+            console.error("❌ Error conectando al nodo de Paseo:", error);
+        }
+    }
+
+    // Actualizar balance
+        async function updateBalance() {
+    if (!api || !selectedAccount) return;
+    try {
+        const {
+            data: { free: balance },
+        } = await api.query.system.account(selectedAccount);
+
+        // ✅ Ajuste correcto a 15 decimales
+        const formattedBalance = Number(balance) / 10 ** 10;
+
+        // ✅ Mostrar 4 decimales (ej: 3,959.9354)
+        document.getElementById("balance").innerText =
+            formattedBalance.toLocaleString("es-ES", {
+                minimumFractionDigits: 4,
+                maximumFractionDigits: 4,
+            }) + " PAS";
+    } catch (error) {
+        console.error("❌ Error obteniendo el balance:", error);
+    }
+}
+
+    // Actualizar cuenta seleccionada
+    function updateSelectedAccount() {
+        const accountsDropdown = document.getElementById("accounts");
+        selectedAccount = accountsDropdown.value;
+        selectedSubWalletAccount = null;
+        updateBalance();
+    }
+
+    // Suscripción a bloques
+    async function subscribeBlockNumber() {
+        if (!api) return;
+        const unsubscribe = await api.rpc.chain.subscribeNewHeads((lastHeader) => {
+            document.getElementById("block-number").innerText =
+                `Bloque actual: #${lastHeader.number}`;
+        });
+    }
+
+    // Información del nodo
+    async function getNodeInfo() {
+        if (!api) {
+            document.getElementById('node-info').innerText = 'API no conectada';
+            return;
+        }
+        try {
+            const chain = await api.rpc.system.chain();
+            const nodeName = await api.rpc.system.name();
+            const nodeVersion = await api.rpc.system.version();
+            document.getElementById('node-info').innerText = `Cadena: ${chain}, Nodo: ${nodeName}, Versión: ${nodeVersion}`;
+        } catch (error) {
+            document.getElementById('node-info').innerText = 'Error obteniendo información del nodo';
+            console.error('Error obteniendo información del nodo:', error);
+        }
+    }
+
+    // Realizar pago rápido
+    async function payAmount(amount) {
+        if (!api) {
+            alert("La API no está conectada.");
+            return;
+        }
+        if (!selectedAccount) {
+            alert("Por favor, conecta y selecciona una cuenta primero.");
+            return;
         }
 
-        // Información del nodo
-        async function getNodeInfo() {
-            if (!api) {
-                document.getElementById('node-info').innerText = 'API no conectada';
-                return;
-            }
-            try {
-                const chain = await api.rpc.system.chain();
-                const nodeName = await api.rpc.system.name();
-                const nodeVersion = await api.rpc.system.version();
-                document.getElementById('node-info').innerText = `Cadena: ${chain}, Nodo: ${nodeName}, Versión: ${nodeVersion}`;
-            } catch (error) {
-                document.getElementById('node-info').innerText = 'Error obteniendo información del nodo';
-                console.error('Error obteniendo información del nodo:', error);
-            }
-        }
+        const recipient = "13uHe9HLv3MAahwFhyepq4yNKysonAzePFLUhgvZNPZp4N5b";
+        const amountPlancks = BigInt(Math.floor(amount * 10 ** 10));
+        let injector = null;
 
-        // Realizar pago
-        async function payOnePas() {
-            if (!api) {
-                alert("La API no está conectada.");
-                return;
-            }
-            if (!selectedAccount) {
-                alert("Por favor, conecta y selecciona una cuenta primero.");
-                return;
-            }
-
-            const recipient = "13uHe9HLv3MAahwFhyepq4yNKysonAzePFLUhgvZNPZp4N5b";
-            const amount = 200;
-            const amountPlancks = BigInt(Math.floor(amount * 10 ** 9));
-
-            let injector = null;
-
+        try {
             if (selectedSubWalletAccount) {
-                // Usar SubWallet
                 injector = await window.injectedWeb3['subwallet-js'].enable('MiDApp').then(provider => provider.signer);
             } else {
-                // Usar Polkadot.js
                 injector = await window.injectedWeb3['polkadot-js'].enable('MiDApp').then(provider => provider.signer);
             }
 
-            try {
-                const transfer = api.tx.balances.transferAllowDeath(recipient, amountPlancks);
-                console.log("Firmando y enviando la transacción...");
-                await transfer.signAndSend(selectedAccount, { signer: injector }, async ({ status, events, dispatchError }) => {
-                    if (status.isInBlock) {
-                        document.getElementById("pay-result").innerText = `Pago incluido en bloque ${status.asInBlock}`;
-                        await updateBalance();
-                    } else if (status.isFinalized) {
-                        document.getElementById("pay-result").innerText = `Pago finalizado en bloque ${status.asFinalized}`;
+            const transfer = api.tx.balances.transferAllowDeath(recipient, amountPlancks);
+
+            await transfer.signAndSend(selectedAccount, { signer: injector }, async ({ status, events, dispatchError }) => {
+                if (dispatchError) {
+                    const decoded = api.registry.findMetaError(dispatchError.asModule);
+                    const { documentation, name, section } = decoded;
+                    console.error(`❌ Error en pago: ${section}.${name}: ${documentation.join(' ')}`);
+                    document.getElementById("pay-result").innerText = `Error en pago: ${section}.${name}: ${documentation.join(' ')}`;
+                    return;
+                }
+
+                if (status.isInBlock) {
+                    try {
+                        const blockHash = status.asInBlock;
+                        const header = await api.rpc.chain.getHeader(blockHash);
+                        const blockNumber = header.number.toNumber();
+
+                        let extrinsicIndex = null;
+
+                        for (let i = 0; i < events.length; i++) {
+                            const { phase, event } = events[i];
+                            const { section, method } = event.toHuman();
+
+                            // Buscar solo eventos ExtrinsicSuccess y ver si tienen el campo applyExtrinsic
+                            if (section === 'system' && method === 'ExtrinsicSuccess') {
+                                if (phase.isApplyExtrinsic) {
+                                    extrinsicIndex = phase.asApplyExtrinsic.toNumber();
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (extrinsicIndex !== null) {
+                            const subscanLink = `https://paseo.subscan.io/extrinsic/${blockNumber}-${extrinsicIndex}`;
+                            const linkHTML = `<a href="${subscanLink}" target="_blank">Ver en Subscan</a>`;
+                            console.log("🔗 EnlaceSS generado:", subscanLink);
+                            console.log(`Pago incluido en bloque: ${blockNumber}, Extrinsic: ${extrinsicIndex}`);
+                            document.getElementById("pay-result").innerHTML = 
+                                `Pago incluido en bloque: ${blockNumber}, Extrinsic #${extrinsicIndex}. ${linkHTML}`;
+                        } else {
+                            document.getElementById("pay-result").innerText = 
+                                `Pago incluido en bloque: ${blockNumber}, pero no se pudo encontrar el índice del extrinsic.`;
+                        }
+                    } catch (error) {
+                        console.error("❌ No se pudo obtener el número del bloque:", error);
+                        document.getElementById("pay-result").innerText = 
+                            `Pago incluido en bloque: ${status.asInBlock}`;
+                    }
+                } else if (status.isFinalized) {
+                    const blockNumber = status.asFinalized.toNumber();
+
+                    let extrinsicIndex = null;
+
+                    for (let i = 0; i < events.length; i++) {
+                        const { phase, event } = events[i];
+                        const { section, method } = event.toHuman();
+
+                        // Buscar solo eventos ExtrinsicSuccess y ver si tienen el campo applyExtrinsic
+                        if (section === 'system' && method === 'ExtrinsicSuccess') {
+                            if (phase.isApplyExtrinsic) {
+                                extrinsicIndex = phase.asApplyExtrinsic.toNumber();
+                                break;
+                            }
+                        }
                     }
 
-                    if (dispatchError) {
-                        const decoded = api.registry.findMetaError(dispatchError.asModule);
-                        const { documentation, name, section } = decoded;
-                        console.error(`Error en pago: ${section}.${name}: ${documentation.join(' ')}`);
-                        document.getElementById("pay-result").innerText = `Error en pago: ${section}.${name}: ${documentation.join(' ')}`;
+                    if (extrinsicIndex !== null) {
+                        const subscanLink = `https://paseo.subscan.io/extrinsic/${blockNumber}-${extrinsicIndex}`;
+                        const linkHTML = `<a href="${subscanLink}" target="_blank">Ver en Subscan</a>`;
+                        console.log("🔗 EnlaceBB generado:", subscanLink);
+                        console.log(`Pago finalizado en bloque: ${blockNumber}, Extrinsic: ${extrinsicIndex}`);
+                        document.getElementById("pay-result").innerHTML = 
+                            `Pago finalizado en bloque: ${blockNumber}, Extrinsic #${extrinsicIndex}. ${linkHTML}`;
+                    } else {
+                        document.getElementById("pay-result").innerText =
+                            `Pago finalizado en bloque: ${blockNumber}, pero no se pudo encontrar el índice del extrinsic.`;
                     }
-                });
-            } catch (error) {
-                console.error("Error enviando pago:", error);
-                document.getElementById("pay-result").innerText = `Error enviando pago: ${error.message}`;
-            }
+                }
+            });
+        } catch (error) {
+            console.error("🚨 Error enviando pago:", error);
+            document.getElementById("pay-result").innerText = `Error enviando pago: ${error.message}`;
         }
-    </script>
+    }
+
+    // Realizar pago personalizado
+    async function payCustomAmount() {
+        if (!api) {
+            alert("La API no está conectada.");
+            return;
+        }
+        if (!selectedAccount) {
+            alert("Por favor, conecta y selecciona una cuenta primero.");
+            return;
+        }
+
+        const input = document.getElementById('custom-amount');
+        const rawAmount = input.value.trim();
+
+        if (!rawAmount || isNaN(rawAmount)) {
+            alert("⚠️ Ingresa un monto válido.");
+            return;
+        }
+
+        const amount = parseFloat(rawAmount);
+
+        if (amount <= 0) {
+            alert("⚠️ El monto debe ser mayor a 0.");
+            return;
+        }
+
+        const { data: { free: balanceRaw } } = await api.query.system.account(selectedAccount);
+        const balanceNumber = Number(balanceRaw.toString());
+        const balanceInPAS = balanceNumber / 10 ** 10;
+
+        const minRemaining = 1.0000; // 1 PAS
+        if (amount + minRemaining > balanceInPAS) {
+            alert(`⚠️ El monto no puede superar tu saldo menos ${minRemaining} PAS`);
+            return;
+        }
+
+        const confirmMsg = `¿Estás seguro de pagar ${amount.toLocaleString("es-ES", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} PAS?`;
+        if (!confirm(confirmMsg)) return;
+
+        const recipient = "13uHe9HLv3MAahwFhyepq4yNKysonAzePFLUhgvZNPZp4N5b";
+        const amountPlancks = BigInt(Math.floor(amount * 10 ** 10));
+
+        let injector = null;
+
+        try {
+            if (selectedSubWalletAccount) {
+                injector = await window.injectedWeb3['subwallet-js'].enable('MiDApp').then(provider => provider.signer);
+            } else {
+                injector = await window.injectedWeb3['polkadot-js'].enable('MiDApp').then(provider => provider.signer);
+            }
+
+            const transfer = api.tx.balances.transferAllowDeath(recipient, amountPlancks);
+
+            await transfer.signAndSend(selectedAccount, { signer: injector }, async ({ status, events, dispatchError }) => {
+                if (dispatchError) {
+                    const decoded = api.registry.findMetaError(dispatchError.asModule);
+                    const { documentation, name, section } = decoded;
+                    console.error(`❌ Error en pago: ${section}.${name}: ${documentation.join(' ')}`);
+                    document.getElementById("pay-result").innerText = `Error en pago: ${section}.${name}: ${documentation.join(' ')}`;
+                    return;
+                }
+
+                if (status.isInBlock) {
+                    try {
+                        const blockHash = status.asInBlock;
+                        const header = await api.rpc.chain.getHeader(blockHash);
+                        const blockNumber = header.number.toNumber();
+
+                        let extrinsicIndex = null;
+
+                        for (let i = 0; i < events.length; i++) {
+                            const { phase, event } = events[i];
+                            const { section, method } = event.toHuman();
+
+                            // Buscar solo eventos ExtrinsicSuccess y ver si tienen el campo applyExtrinsic
+                            if (section === 'system' && method === 'ExtrinsicSuccess') {
+                                if (phase.isApplyExtrinsic) {
+                                    extrinsicIndex = phase.asApplyExtrinsic.toNumber();
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (extrinsicIndex !== null) {
+                            const subscanLink = `https://paseo.subscan.io/extrinsic/${blockNumber}-${extrinsicIndex}`;
+                            const linkHTML = `<a href="${subscanLink}" target="_blank">Ver en Subscan</a>`;
+                            console.log("🔗 YYEnlace generado:", subscanLink);
+                            console.log(`Pago incluido en bloque: ${blockNumber}, Extrinsic: ${extrinsicIndex}`);
+                            document.getElementById("pay-result").innerHTML = 
+                                `Pago incluido en bloque: ${blockNumber}, Extrinsic #${extrinsicIndex}. ${linkHTML}`;
+                        } else {
+                            document.getElementById("pay-result").innerText = 
+                                `Pago incluido en bloque: ${blockNumber}, pero no se pudo encontrar el índice del extrinsic.`;
+                        }
+                    } catch (error) {
+                        console.error("❌ No se pudo obtener el número del bloque:", error);
+                        document.getElementById("pay-result").innerText = `Pago incluido en bloque: ${status.asInBlock}`;
+                    }
+                } else if (status.isFinalized) {
+                    const blockNumber = status.asFinalized.toNumber();
+
+                    let extrinsicIndex = null;
+
+                    for (let i = 0; i < events.length; i++) {
+                        const { phase, event } = events[i];
+                        const { section, method } = event.toHuman();
+
+                        // Buscar solo eventos ExtrinsicSuccess y ver si tienen el campo applyExtrinsic
+                        if (section === 'system' && method === 'ExtrinsicSuccess') {
+                            if (phase.isApplyExtrinsic) {
+                                extrinsicIndex = phase.asApplyExtrinsic.toNumber();
+                                break;
+                            }
+                        }
+                    }
+
+                    if (extrinsicIndex !== null) {
+                        const subscanLink = `https://paseo.subscan.io/extrinsic/${blockNumber}-${extrinsicIndex}`;
+                        const linkHTML = `<a href="${subscanLink}" target="_blank">Ver en Subscan</a>`;
+                        console.log("🔗 EnlaceXX generado:", subscanLink);
+                        console.log(`Pago finalizado en bloque: ${blockNumber}, Extrinsic: ${extrinsicIndex}`);
+                        document.getElementById("pay-result").innerHTML = 
+                            `Pago finalizado en bloque: ${blockNumber}, Extrinsic #${extrinsicIndex}. ${linkHTML}`;
+                    } else {
+                        document.getElementById("pay-result").innerText =
+                            `Pago finalizado en bloque: ${blockNumber}, pero no se pudo encontrar el índice del extrinsic.`;
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("🚨 Error enviando pago:", error);
+            document.getElementById("pay-result").innerText = `Error enviando pago: ${error.message}`;
+        }
+    }
+</script>
 </body>
 </html>
